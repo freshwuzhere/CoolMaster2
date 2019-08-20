@@ -39,7 +39,7 @@ Interface between Indigo Home Automation system and Coolmaster 4000M
 
 1.  The plugin needs pyserial which should be already in your installation.
 
-1.  The temperature settings should match the units in the Coolmaster.  If it says 20 (C) then you will be entering numbers in C.  I use mine in F.  I think you can configure this on Coolmaster in Serial Terminal.
+1.  The temperature settings should match the units in the Coolmaster.  If it says 20 (C) then you will be entering numbers in C.  I use mine in F.  I think you can configure this on Coolmaster in Serial Terminal with the 'set' command.  I have some hard limits set for F units (like max temp setting is 95) which is safe but maybe a little warm....
 
 ## Known Bugs
 
