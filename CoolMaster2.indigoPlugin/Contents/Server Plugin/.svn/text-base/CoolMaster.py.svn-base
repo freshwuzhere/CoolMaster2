@@ -1,0 +1,706 @@
+import os
+import sys
+import serial
+import time
+import functools
+import threading
+import string
+
+import indigo
+
+from hvac_params import hvac_params
+
+
+######
+#   CoolMaster is a responder only and does not issue unsolicited messages except at startup
+#  	This behaviour is different to many other indigo plugin serial devices
+#####
+
+######
+#  Debug logging will generate a lot of lines in log files - careful!
+#####
+
+#####
+# 1 sec seems like a balanced sleep after commands between
+# the USB-to-Serial and Aqualink Serial RS connection.  It's slooooow.
+#####
+
+#######################
+## CoolMaster state structure to hand around
+#######################
+
+
+#####
+# make a list of known commands to check against
+####
+
+kKnownCommands=["alloff","allon","cool","dry","heat","auto","fan","fspeed","off","on","set","stat3","swing","temp","group"]
+
+class CoolMaster(object):
+	coolMasterUnitParams = []
+	kSleepAfterSerialCommand = 0.5
+	kSleepBetweenSerialLoop = 3
+	kCyclesBetweenHVACCheck = 2  
+	#  this means 2 stat3 will be called on cycle 0 and 4 (2 between) set to zero if you want to detect changes more quickly.
+	# this is how room temp feeds back to the system.
+	# tis is the system temperature expectations - ie - if everything is in F - then enter F
+	kCMTempUnits = "F"
+	kIndigoTempUnits = "F"
+	
+	
+	kTempConvertCM2I = kCMTempUnits + "2" + kIndigoTempUnits
+	kTempConvertI2CM =   kIndigoTempUnits + "2" + kCMTempUnits
+	
+	
+	
+
+	##############################################################################################
+	def __init__(self, plugin):
+		self.plugin = plugin
+
+	########################################
+	def __del__(self):
+		pass			
+		
+	##############################################################################################
+	def startCommThread(self, dev):
+		
+		devProps = dev.pluginProps
+		
+#		self.plugin.debugLog("\n############## \ndevProps  = " + str(devProps)  + " \n ################\n") 
+		portName = devProps.get("serialPort")
+		self.plugin.debugLog("Serial Port Name is " + portName)
+		self.conn = self.plugin.openSerial(dev.name, portName, 9600, timeout=1, writeTimeout=1)
+
+		### If connection to serial device is successfully statrted, queue initial commands
+		### Else, log error starting communication
+		if self.conn:
+			self.plugin.debugLog("Device name is " + dev.name)
+
+			self.commQueue = []		
+			for command in self.commQueue:
+				self.plugin.debugLog("In queue: " + command)				
+
+			### Start separate concurrentSerialComm thread - syntax roughly based on EasyDAQ Plugin
+			devId = dev.id
+			self.concurThread = threading.Thread(target=functools.partial(self.concurrentSerialComm, devId))
+			self.concurThread.start()
+			self.plugin.debugLog("Started concurrent thread.")
+			
+		else:
+			indigo.server.log("Error initializing communciations with serial device " + dev.name)
+			
+	######################
+	# Send command to stop concurrentSerialComm thread, then close serial connection and exit.
+	def stopCommThread(self, dev):
+		self.plugin.debugLog("Initiating stop of concurrent thread.")
+		self.queueSerialCmd("stopConcurrentSerialComm")
+		time.sleep(3)		# Give plenty of time for command to stop concurrent thread to execute.
+		self.conn.close()
+		self.plugin.debugLog("closed connection to device " + dev.name)
+
+
+	##############################################################################################
+	def concurrentSerialComm(self, devId):
+		try:
+			counter = 0
+			self.plugin.debugLog("Starting concurrent serial communications.")
+			while True:
+
+				##################################################################################
+				# First on each pass, get current device state infomation, as it may have changed,
+				# 	and needs to be used to ensure proper commands for some state updates.
+				dev = indigo.devices[devId]
+				##################################################################################
+				# Next, on each pass read/decode any data sitting in the buffer - unlikely to have anything here
+				# but best to clear it out before geting more stuff on top
+				self.readSerialBuffer(devId)
+#				self.plugin.debugLog("Reading serial buffer complete - found this" )
+
+				##################################################################################
+				# Next, send commands from those queued.
+				# Use a copy of the queue to avoid confusion if added to while executing.
+				# Check for command to terminate thread
+				# Clear commands executed here, but not any added while executing.
+				# Only allow temperature requsts if pump is on (all systems) and valves are in proper position (Combo systems).
+				# Note that user could send other commands that are not allowed, 
+				if len(self.commQueue) >= 1:
+					self.plugin.debugLog("Queue has " + str(len(self.commQueue)) + " command(s) waiting.")
+					workingQueue = self.commQueue
+					if "stopConcurrentSerialComm" in workingQueue:	# Command to stop queue?
+						self.errorLog("Raising exception to stop concurrent thread.")
+						workingQueue = []
+						self.commQueue = []			#Clear queue
+						raise self.StopThread		# Raise exception to stop thread.
+					lenQueue = len(workingQueue)
+					self.plugin.debugLog("length of queue = " + str(lenQueue))
+					for command in workingQueue:
+						self.plugin.debugLog("Processing command: " + command)
+						self.sendSerialCmd(devId, command)
+						self.plugin.debugLog(command + " command completed.")
+
+					self.commQueue = self.commQueue[lenQueue:]
+
+				##################################################################################
+					# Sleep a bit on each cycle.
+					# then read the buffer - wait enough time for device to repsond.  then re-start cycle waiting for command
+					self.plugin.debugLog("about to sleep")
+					time.sleep(self.kSleepAfterSerialCommand)
+					self.readSerialBuffer(devId)
+								
+				time.sleep(self.kSleepBetweenSerialLoop)  # gap between loops waiting for a command
+				###############
+				##### check to see if status update required - if so - run this routine
+				###############
+				self.plugin.debugLog("Counter = " + str(counter))
+				if counter > self.kCyclesBetweenHVACCheck:
+					self.queueSerialCmd("stat3")
+					counter=0
+				else: 
+					counter = counter +1 
+				self.plugin.debugLog("End of Routine cycle through concurrentSerialComm thread.")
+				
+		### Exceptions to exit thread.  !!! Need to understand 2nd and 3rd except:, "borrowed" from EasyDAQ plugin.
+		except self.StopThread:
+			self.plugin.debugLog("Quiet Stop  ")
+			pass	# silently fall into finally: section below
+		except Exception, e:
+			self.plugin.debugLog("EXCEPTION " + str(e))
+			self.plugin.exceptionLog()
+		except:
+			self.plugin.debugLog("EXCEPTION ")
+			self.plugin.exceptionLog()
+		finally:
+			self.plugin.debugLog("Should now stop concurrent thread.")
+			pass	# Finally, exit thread.
+			
+
+	##############################################################################################
+	### Add new command to queue, which is polled and emptied by concurrentSerialComm funtion
+	def queueSerialCmd(self, command):
+		self.plugin.debugLog("\nIN QUEUESERIALCMD "  + command)
+		self.commQueue.append(command)	# Append new command.
+		self.plugin.debugLog("\n EXITING  QUEUESERIALCMD "  + command)
+
+	##############################################################################################
+	### Check to see if any new data on serial read - unlikely
+	def readSerialBuffer(self, devId):
+		dev = indigo.devices[devId]
+		dev.updateStateOnServer("commActive", value=True)
+		buffCount = self.conn.inWaiting()
+		dev.updateStateOnServer("commActive", value=False)
+		if buffCount > 0:
+			self.plugin.debugLog("Number of characters waiting is " + str(buffCount))
+			dev.updateStateOnServer("commActive", value=True)
+			buffCount = self.conn.inWaiting()
+			responseString = self.conn.read(size=buffCount)
+			dev.updateStateOnServer("commActive", value=False)
+			self.plugin.debugLog("CoolMaster sent string " + responseString)
+
+			success = self.decodeResponse(devId, responseString)
+			self.plugin.debugLog("SUCCESS =  " + success)
+			if success == "PARAMS":
+				self.setStateAllHVACStatesFromstat3Cmd(devId)
+			elif success == "OK" :
+				self.plugin.debugLog("Command OK no Params")
+			else:
+				self.plugin.debugLog("Decode Failed")
+			
+		
+		time.sleep(self.kSleepAfterSerialCommand)	
+
+
+	########################################
+	### Send queued command to CoolMaster, then read reply.
+	def sendSerialCmd(self, devId, command):
+		dev = indigo.devices[devId]
+		self.plugin.debugLog(" \nIN sendSERIALCMD --" + command) 
+		writeCommand = command + "\r"	# append carraige return
+		dev.updateStateOnServer("commActive", value=True)
+		sentCount = self.conn.write(writeCommand)
+		dev.updateStateOnServer("commActive", value=False)
+		
+
+	### Queue a query commans; use stat3 as easy to deal with - send result to decoder for data laden object
+	def directCoolmaster(self, pluginAction):
+		dev = indigo.devices[pluginAction.deviceId]
+		command = pluginAction.props.get("newCommand")
+		### Only Allow the commands that we recognise 
+		passed = False 
+		for goodCommand in kKnownCommands:
+			if string.find(command,goodCommand) == -1:
+				passed = True   #  found a good command 	
+
+		if passed:
+			self.coolmaster.queueSerialCmd(command)
+			if dev.states["loggingChoice"] != "logOff":
+				indigo.server.log(command + " command queued.")
+	
+
+
+
+	##############################################################################################
+	### Decode response
+	### This is a simpel read and update the correct data then set states of the thermostat devices
+	def decodeResponse(self, devId, responseString):
+		
+
+		stringLen = len(responseString)
+		self.plugin.debugLog("stringLen = " + str(stringLen))
+		while stringLen > 0:
+
+
+			self.plugin.debugLog("Remaining response to decode: \n" + responseString + ", of length " + str(stringLen) + " characters")
+			### Get fresh version of device states, as some are decoded based on others.			
+			dev = indigo.devices[devId]			
+	
+	
+			### All responses should end with at least <CR>
+			### If no <CR> found at the end, then response is faulty, abort this decode
+			if string.find(responseString,u"\u000D") == -1:
+				self.errorLog("Faulty response no CR: " + responseString)
+				stringLen = 0
+				responseString = []
+				return("FAIL")
+				
+			elif len(responseString) < 29:
+				if responseString[0:1] == u"OK" :
+					stringLen = 0
+					responseString = []
+					return("OK")
+				else:
+					return("BAD_STRING")
+				
+			else:
+				self.plugin.debugLog("\n  ENTERING DECODE \n")
+				coolMasterUnitParams = []
+				self.plugin.debugLog("\n response String = " + responseString)
+				coolMasterUnitParams = self.decoder(responseString)
+				self.plugin.debugLog("\n COOL MASTER VARIABLES  \n " + str(coolMasterUnitParams))	
+				self.plugin.debugLog("address \ton_off \t Set Temp \t Room Temp\t Fan speed \t Op Mode \t Fail_OK \t Filter")
+				for unit in coolMasterUnitParams:
+					self.plugin.debugLog( unit.address + "\t" + unit.on_off_state +"\t" + str(unit.set_temp) +"\t" +
+										str(unit.room_temp) + "\t" + unit .fan_speed + "\t" + unit.mode  + "\t" +
+										unit.code + "\t" + str(unit.filter) )
+				stringLen = 0
+				responseString = []
+				self.plugin.debugLog("stringLen = " + str(stringLen))
+				self.plugin.debugLog("about to jump out ") 
+				self.coolMasterUnitParams = coolMasterUnitParams
+				return("PARAMS")
+		
+
+		
+		
+		
+###########################################################################
+##  coolMaster routines
+##########
+
+	def coolMasterIndigoDictCreate(self , devId, UnitParams):	
+#		self.plugin.debugLog("IN PROP SET" + str(devId) + str(UnitParams))	
+		dev = indigo.devices[devId]
+		#self.plugin.debugLog("GOT DEV" + str(devId) + str(dev))	
+		# First update Deice Properties
+		localPProps = dev.pluginProps
+#		self.plugin.debugLog("LOCAL PROPS COPY \n" + str(localPProps))	
+		#unitList = indigo.List()
+		unitList = list()
+		for unit in UnitParams:	
+			unitList.append("A_"+unit.address)
+			
+#		self.plugin.debugLog("HERE IS UNIT LIST " + str(unitList))	
+		
+			
+		try:
+#			self.plugin.debugLog(" in if statement ")	 
+			localPProps.update({"HVACList":unitList,"checkForUpdates":True})
+		except KeyError :
+			self.plugin.debugLog(" in excpetion ")	
+			pass
+					
+#		self.plugin.debugLog(" after if statement ")
+
+		unitCount = len(UnitParams)
+#		self.plugin.debugLog("unit count =  "  + str(unitCount))	
+		localPProps.update({"units":unitCount,"checkForUpdates":True})
+		
+		dev.replacePluginPropsOnServer(localPProps)
+#		self.plugin.debugLog("\n##########\n####DEV with NEW PROPS\n######### " + str(dev))			
+		
+
+	def testComms(self,dev):
+#		indigo.server.log("in test_comms" + str(dev))
+		return (True)
+
+
+	def decoder(self, block_in):
+#		self.plugin.debugLog("\n\n IN DECODE \n" + block_in)
+		#  to decode the stat message from Cool Automation controller
+		#  break into a list of strings one for each line
+		str_list = []
+		str_list = self.line_decoder(block_in)
+		hvac_unit_status = []
+		for line in str_list:
+#			self.plugin.debugLog("making hvac")	
+			hvac = hvac_params()
+#			self.plugin.debugLog("made hvac going to decoder")	
+			hvac= self.hvac_param_decoder(line) 
+			if hvac:
+				hvac_unit_status.append(hvac)
+			else:
+				self.plugin.debugLog("malfrmed hvac in decode" + str(hvac_unit_status))	
+				
+		return(hvac_unit_status)
+
+
+	def line_decoder(self ,block_in):
+#		self.plugin.debugLog("\n\n IN LINE DECODE \n"  + block_in)
+
+		str_list = []
+		counter = 0
+		start = 0
+		end = len(block_in)
+
+		# first count the lines
+		while len(block_in) > 0:
+
+			index = block_in.find("\r",start,end)
+			if index==-1 :
+				block_in = ""  #  no \r found
+#				self.plugin.debugLog("\nindex = -1")
+				exit
+			else:
+				counter = counter +1
+				str_list.append(block_in[start:index])
+				block_in = block_in[index+2:end]
+#				self.plugin.debugLog("blockin now is " + block_in)
+#		self.plugin.debugLog("lines decoded = " + str(counter))
+		return str_list
+
+	def hvac_param_decoder(self, line_in):
+	
+		self.plugin.debugLog("IN PARAM DECODE")
+		hvac = hvac_params()
+		self.plugin.debugLog("made new HVAC")
+
+		if len(line_in) >= 30  and len(line_in) < 34 :
+#			self.plugin.debugLog("in line slicer")
+			hvac.address = line_in[0:3]
+			hvac.address = hvac.address.strip()
+#			self.plugin.debugLog("address " + hvac.address)
+			hvac.on_off_state = line_in[4:7]
+			hvac.on_off_state = hvac.on_off_state.strip()
+#			self.plugin.debugLog("on off " + hvac.on_off_state)
+			hvac.set_temp = float(line_in[8:11])
+#			self.plugin.debugLog("raw set " + line_in[8:11])	
+#			self.plugin.debugLog("set T " + str(hvac.set_temp))	
+#			self.plugin.debugLog("raw room " + line_in[13:16])			
+			hvac.room_temp =float(line_in[13:16])
+#			self.plugin.debugLog("room_T " + str(hvac.room_temp))			
+			hvac.fan_speed = line_in[19:23]
+			hvac.fan_speed = hvac.fan_speed.strip()
+#			self.plugin.debugLog("fanspeed " + hvac.fan_speed)				
+			hvac.mode = line_in[24:28]
+			hvac.mode = hvac.mode.strip()
+#			self.plugin.debugLog("mode " + hvac.mode)				
+			hvac.code = line_in[29:len(line_in)-2]
+			hvac.code = hvac.code.strip()
+#			self.plugin.debugLog("code " + hvac.code)
+			hvac.filter = int(line_in[len(line_in)-1])
+#			self.plugin.debugLog("filter " + str(hvac.filter))
+#			self.plugin.debugLog("out of slicer")
+			self.plugin.debugLog( hvac.address + "\t" + hvac.on_off_state +"\t" + str(hvac.set_temp) +"\t" + str(hvac.room_temp) + "\t" + hvac .fan_speed + "\t" + hvac.mode  + "\t" + hvac.code + "\t" + str(hvac.filter) )
+
+			return hvac
+		elif line_in == "OK":
+			# return something that will be significant.
+			pass
+#			self.plugin.debugLog("OK at end of data block " )
+		
+
+
+	def setStateAllHVACStatesFromstat3Cmd(self,devId):
+		######################
+		###	TAKES A STAT3 RESPONSE AND PLUGS IN THE STATE CHANGES 
+		###		- LOADS FROM CONTROLLER ID SO NEED TO SEARCH THERMOSTATS THAT IT PERTAINS TO
+		######################
+		self.plugin.debugLog("in Set all States")
+		dev = indigo.devices[devId]
+		
+		for devs in indigo.devices :
+			if devs.deviceTypeId == "HVAC_Unit_CM":
+				self.plugin.debugLog("device props = " + str(devs.pluginProps))
+				if "CM_Controllers" in devs.pluginProps:
+					self.plugin.debugLog("device name = " + dev.name +  "CM_Contollers = " + devs.pluginProps["CM_Controllers"])
+					if devs.pluginProps["CM_Controllers"] == dev.name:
+						self.plugin.debugLog("here are teh device names " + dev.name)
+						self.setStateFromHVACParams(devs.id)
+						self.plugin.debugLog("back from States set")
+					else:
+						self.plugin.debugLog("#######################  NO MATCH to Controller ##########\n")					
+				else:
+					self.plugin.debugLog("#######################  No CM Controllers ##########\n")					
+		
+		
+		
+		
+	def setStateFromHVACParams(self, devId):
+		hvac = hvac_params()
+		dev= indigo.devices[devId]
+		self.plugin.debugLog("#######################  DEVICE STATES   ==  "  + str(dev.states))
+		localProps = dev.pluginProps
+		count = 0
+		unit_no = 0
+		self.plugin.debugLog("####################\n###  PRE HVAC address Unit ouput  \n##########\n"+ dev.name + "\n##########")	
+		if "ACDevices" in localProps:
+			unit_no = int(localProps["ACDevices"]) -1 
+			if unit_no < 0 :
+				self.plugin.debugLog("###########\n####  UNIT NUMBER NEG NO UPDATE "  + str(unit_no) + "\n###########")	
+				return()
+			self.plugin.debugLog("###########\n####  UNIT NUMBER UPDATING = "  + str(unit_no) + "\n###########")			
+		else:
+			self.plugin.debugLog("###########\n####  NO ADDRESS IN  = "  + dev.name + "\n###########")	
+			return()
+#		replace Props if they've been changed							
+#		dev.replacePluginPropsOnServer(localProps)	
+#		self.plugin.debugLog("\n####################\n### PROPS after Update  \n##########\n"+ str(dev.pluginProps) + "\n##########")	
+		
+		
+		if len(self.coolMasterUnitParams) >= unit_no :
+			self.plugin.debugLog("###########\n####  setting hvac"  + str(unit_no) + "\n###########")
+			hvac = self.coolMasterUnitParams[unit_no]
+		else:
+			self.plugin.debugLog("\n####################\n###   NO DATA in HVAC PARAMS \n##########\n")
+			return()
+
+		self.plugin.debugLog( 	"unit_address=\t" + hvac.address + "\n" +
+								"hvac_ON_OFF= \t" + hvac.on_off_state +"\n" + 
+								"hvac_set_temp=\t"+ str(hvac.set_temp) +"\n" +
+								"hvac_room_temp=\t"+ str(hvac.room_temp) + "\n" + 
+								"hvac_fan_speed=\t" + hvac .fan_speed + "\n" + 
+								"hvac_mode=     \t" + hvac.mode  + "\n" +
+								"hvac_code= \t" + hvac.code + "\n" + 
+								"hvac_filter = \t" + str(hvac.filter) )
+
+
+		self.plugin.debugLog("\n####################\n###  HVAC data  \n##########\n"+ str(hvac) + "\n##########")	
+
+		if hvac.on_off_state == u"OFF":
+			#set all the hvac stuff off
+			dev.updateStateOnServer("mode", value="Off")
+		elif hvac.mode == u"Cool":
+			self.plugin.debugLog("\n##########\n### HVAC IN Cool MODE \n##########")
+			dev.updateStateOnServer("mode", value="Cool")	
+		elif hvac.mode == u"Heat":
+			self.plugin.debugLog("\n##########\n### HVAC IN Heat MODE \n##########")
+			dev.updateStateOnServer("mode", value="Heat")
+		elif hvac.mode == u"Auto":
+			self.plugin.debugLog("\n##########\n### HVAC IN Auto MODE \n##########")	
+			dev.updateStateOnServer("mode", value="Auto")
+		elif hvac.mode == u"Fan":
+			self.plugin.debugLog("\n##########\n### HVAC IN FAN MODE ONLY\n##########" + str(indigo.kFanMode.AlwaysOn))			
+			dev.updateStateOnServer("mode", value="Fan")
+		elif hvac.mode == u"Dry":
+			self.plugin.debugLog("\n##########\n### HVAC IN DRY MODE ONLY\n##########")
+			dev.updateStateOnServer("mode", value="Dry")
+		else:	
+			self.plugin.debugLog("\n##########\n### HVAC MDOE NOT RECOGNISED\n##########")
+			
+		self.plugin.debugLog("\n##########\n -- Mode set ")
+		# now input the fan speed
+		if hvac.test_fan_string(hvac.fan_speed):
+			if hvac.fan_speed == u"Auto":
+				self.plugin.debugLog("\n##########\n### HVAC IN ON FAN MODE ONLY\n##########" )	
+				dev.updateStateOnServer("fanSpeed", value="Auto")
+			elif hvac.fan_speed == u"Low":
+				self.plugin.debugLog("\n##########\n### HVAC IN ON FAN MODE ONLY\n##########" )	
+				dev.updateStateOnServer("fanSpeed", value="Low")
+			elif hvac.fan_speed == u"Med":
+				self.plugin.debugLog("\n##########\n### HVAC IN ON FAN MODE ONLY\n##########" )	
+				dev.updateStateOnServer("fanSpeed", value="Med")
+			elif hvac.fan_speed == u"High":
+				self.plugin.debugLog("\n##########\n### HVAC IN ON FAN MODE ONLY\n##########" )	
+				dev.updateStateOnServer("fanSpeed", value="High")
+			elif hvac.fan_speed == u"Low":
+				self.plugin.debugLog("\n##########\n### HVAC IN ON FAN MODE ONLY\n##########" )	
+				dev.updateStateOnServer("fanSpeed", value="Low")
+			elif hvac.fan_speed == u"Top":
+				self.plugin.debugLog("\n##########\n### HVAC IN ON FAN MODE ONLY\n##########" )	
+				dev.updateStateOnServer("fanSpeed", value="Top")
+		else:
+			self.plugin.debugLog("\n##########\n### FAN SPEED NOT RECOGNISED  " + hvac.address + hvac.fan_speed +"\n##########" )	
+
+
+		# now the set temperature	
+		if hvac.set_temp > 40 and hvac.set_temp < 95:
+			#set all the hvac stuff off
+		
+			dev.updateStateOnServer("coolSetPoint", value=hvac.set_temp)
+			dev.updateStateOnServer("heatSetPoint", value=hvac.set_temp)
+		else:
+			self.plugin.debugLog("HVAC set Temp Out of Range" + hvac.address + str(hvac.set_temp))	
+
+		# now do the room temp   NOTE Assuming all values are in degF
+		if hvac.room_temp>0 and hvac.room_temp < 120:
+			dev.updateStateOnServer("roomTemperature", value=hvac.room_temp)
+			# note multiple input temps will need additional states but not supported by Coolmaster format 'stat3'
+		else:
+			self.plugin.debugLog("Room Temp Out of Range" + hvac.address + str(hvac.room_temp))	
+
+# 		if hvac.room_humidity>0 and hvac.room_humidity< 100:
+# 			dev.updateStateOnServer("roomHhumidity", value=hvac.room_humidity)
+# 			# note multiple input temps will need additional states but not supported by Coolmaster format 'stat3'
+# 		else:
+# 			self.plugin.debugLog("Room Temp Out of Range" + hvac.address + str(hvac.room_temp))	
+
+
+		
+		#  check the error codes
+		if not hvac.test_error_codes(hvac.code):
+			self.plugin.debugLog("ERROR CODE " + hvac.code + " from " + hvac.address)
+	
+		if hvac.filter != 1:
+			if hvac.filter == 0:
+				self.plugin.debugLog("Filter change required on hvac " + hvac.address )	
+			else:
+				self.plugin.debugLog("Filter change signal corrupt on " + hvac.address + "it says --> " + str(hvac.code))
+				
+
+		self.plugin.debugLog("\n####################\n###  POST HVAC address Unit ouput  \n##########\n")
+			
+			
+	def setMode(self , dev, newMode):	
+		# decode which unit so we can address appropriately
+		localProps = dev.pluginProps
+		if "ACDevices" in localProps:
+			address =  localProps["ACDevices"]
+			
+			self.plugin.debugLog("#####  IN handle CHANGE HVAC MODE ACTION ###  address of unit is " + address )
+			
+		else:
+			self.plugin.debugLog("#####  ACDEvise not in Plugin Props " + str(localProps) )
+			return()			
+		
+		# decode hvac mode into command mode for coolmaster
+		if newMode == "Off":
+			command_str = "off "+ address
+			dev.updateStateOnServer("mode", value="Off")
+
+		elif newMode == "Heat":
+			command_str = "on " + address +  u"\u000D" +  "heat "+ address
+			dev.updateStateOnServer("mode", value="Heat")
+
+
+		elif newMode == "Cool":
+			command_str = "on " + address +  u"\u000D" +"cool "+ address
+			dev.updateStateOnServer("mode", value="Cool")
+			
+		elif newMode == "Auto":
+			command_str = "on " + address +  u"\u000D" + "auto "+ address
+			dev.updateStateOnServer("mode", value="Auto")
+			
+		elif newMode == "Dry":
+			command_str = "on " + address +  u"\u000D" + "dry "+ address
+			dev.updateStateOnServer("mode", value="Auto")
+
+		elif newMode == "Fan":
+			command_str = "on " + address +  u"\u000D" + "fan "+ address
+			dev.updateStateOnServer("mode", value="Auto")
+			
+		else :
+			self.plugin.debugLog("Couldn't decode HVAC mode change HVAC address" + address  + "Mode call was" + newMode)
+		
+		self.plugin.debugLog("Command String = " + command_str )	
+		self.queueSerialCmd(command_str)
+		
+		
+	def setFanMode(self, dev, newFanMode ):
+		localProps = dev.pluginProps
+		hvac = hvac_params()
+		if "ACDevices" in localProps:
+			address =  localProps["ACDevices"]
+			
+			self.plugin.debugLog("#####  IN handle CHANGE FAN MODE ACTION ###  address of unit is " + address )
+			
+		else:
+			self.plugin.debugLog("#####  AC DEvise not in Plugin Props " + str(localProps) )
+			return()	
+			
+		# decode hvac mode into command mode for coolmaster
+		if newFanMode == "Auto":
+			command_str = "fspeed "+ address + " a"
+			dev.updateStateOnServer("fanMode", value="Auto")
+			
+		elif newFanMode == "Top":
+			command_str = "fspeed "+ address + " t"
+			dev.updateStateOnServer("fanMode", value="Top")
+		
+		elif newFanMode == "High":
+			command_str = "fspeed "+ address + " h"
+			dev.updateStateOnServer("fanMode", value="High")	
+
+		elif newFanMode == "Med":
+			command_str = "fspeed "+ address + " m"
+			dev.updateStateOnServer("fanMode", value="Med")
+					
+		elif newFanMode == "Low":
+			command_str = "fspeed "+ address + " l"
+			dev.updateStateOnServer("fanMode", value="Low")
+
+		else :
+			self.plugin.debugLog("Command not Recognised = " + newFanMode )
+
+		self.plugin.debugLog("Command String = " + command_str )	
+		self.queueSerialCmd(command_str)
+
+		return()
+
+	def setTemp(self, dev, newSetPoint):
+		self.plugin.debugLog("  val is " + str(newSetPoint) )
+
+		hvac2 = hvac_params()
+		localProps = dev.pluginProps
+		if "ACDevices" in localProps:
+			address =  localProps["ACDevices"]
+			
+			self.plugin.debugLog("#####  IN CHANGE FTEMP ###  address of unit is " + address )
+			
+		else:
+			self.plugin.debugLog("#####  AC DEvise not in Plugin Props " + str(localProps) )
+			return()	
+			
+		# decode hvac mode into command mode for coolmaster
+		newSetPointNum = float(newSetPoint)
+		if newSetPointNum >-2 and newSetPointNum < 95:
+			command_str = "temp "+ address + " " + newSetPoint
+			if newSetPoint == "-1": 
+				dev.updateStateOnServer("coolSetPoint", value=dev.state.setPointCool -1 )
+				dev.updateStateOnServer("heatSetPoint", value=dev.state.setPointHeat -1 )
+			elif  newSetPoint == "+1": 
+				dev.updateStateOnServer("coolSetPoint", value=dev.state.setPointCool +1 )
+				dev.updateStateOnServer("heatSetPoint", value=dev.state.setPointHeat +1 )
+			else:
+				dev.updateStateOnServer("coolSetPoint", value=newSetPoint)
+				dev.updateStateOnServer("heatSetPoint", value=newSetPoint )
+				
+		else:	
+			return()
+				
+		self.plugin.debugLog("Command String = " + command_str )	
+		self.queueSerialCmd(command_str)
+	
+		return()
+
+	def refreshStatesFromHardware(self, dev, True, False):
+		self.queueSerialCmd("stat3")
+		return()
+		
+#########################
+### TODO Action Call Back routines to :-
+### 	Set Tempearature 	
+###		Turn on fan or off
+###  	Turn on or off syste,
+###
+########################
+			

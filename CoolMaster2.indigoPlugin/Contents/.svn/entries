@@ -1,0 +1,68 @@
+10
+
+dir
+1
+svn://192.168.1.50/indigo
+svn://192.168.1.50/indigo
+
+
+
+2013-12-10T20:35:40.490660Z
+1
+Fresh
+
+
+svn:special svn:externals svn:needs-lock
+
+
+
+
+
+
+
+
+
+
+
+9b145256-61d9-11e3-a997-b160270044ca
+
+Server Plugin
+dir
+
+info.plist
+file
+2
+
+
+
+2013-11-20T23:34:58.000000Z
+82e5f454d0f7c26cbba73610560bb0bf
+2013-12-10T20:56:13.697526Z
+2
+Fresh
+has-props
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+638
+
+trunk
+dir
+

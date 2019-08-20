@@ -1,0 +1,102 @@
+<?xml version="1.0"?>
+<Actions>
+        <SupportURL>https://sites.google.com/a/ianburns.com/index/</SupportURL>
+        <Action id="get_HVAC_data" deviceFilter = "self">
+            <Name>Collect Latest HVAC info</Name>
+            <ConfigUI>
+                <Field id="getHVACData"  type="button">
+                    <Label>Get Data:</Label>
+                    <Title>Get Data</Title>
+                    <CallbackMethod>coolMasterGetDataUpdate</CallbackMethod>
+                </Field>
+            </ConfigUI>
+        </Action>
+        <Action id="incrementTemp" deviceFilter = "self">
+            <Name>Increment this Thermostat by 1 degree</Name>
+            <CallbackMethod>coolMasterIncrementThermostat</CallbackMethod>
+        </Action> 
+        <Action id="deccrementTemp" deviceFilter = "self">
+            <Name>Decrement this Thermostat by 1 degree</Name>
+            <CallbackMethod>coolMasterDecrementThermostat</CallbackMethod>
+        </Action> 
+        <Action id="setTemp" deviceFilter = "self">
+            <Name>Set this Thermostat to Value</Name>
+            <CallbackMethod>coolMasterSetThermostat</CallbackMethod>
+        </Action> 
+        <Action id="setFanAuto" deviceFilter = "self">
+            <Name>Set Fan to Auto Mode</Name>
+            <CallbackMethod>coolMasterSetFanAuto</CallbackMethod>
+        </Action> 
+        <Action id="setFanTop" deviceFilter = "self">
+            <Name>Set Fan to Top</Name>
+            <CallbackMethod>coolMasterSetFanTop</CallbackMethod>
+        </Action> 
+        <Action id="setFanHigh" deviceFilter = "self">
+            <Name>Set Fan to Hi</Name>
+            <CallbackMethod>coolMasterSetFanHi</CallbackMethod>
+        </Action> 
+        <Action id="setFanMed" deviceFilter = "self">
+            <Name>Set Fan to Med</Name>
+            <CallbackMethod>coolMasterSetFanMed</CallbackMethod>
+        </Action> 
+        <Action id="setFanLow" deviceFilter = "self">
+            <Name>Set Fan to Low</Name>
+            <CallbackMethod>coolMasterSetFanLow</CallbackMethod>
+        </Action> 
+        <Action id="setAllOff" deviceFilter = "self">
+            <Name>Turn All Units Off</Name>
+            <CallbackMethod>coolMasterSetAllOff</CallbackMethod>
+        </Action> 
+        <Action id="setAllOn" deviceFilter = "self">
+            <Name>Turn All Units On</Name>
+            <CallbackMethod>coolMasterSetAllOn</CallbackMethod>
+        </Action> 
+        <Action id="setOff" deviceFilter = "self">
+            <Name>Turn Unit Off</Name>
+            <CallbackMethod>coolMasterSetOff</CallbackMethod>
+        </Action> 
+        <Action id="setOn" deviceFilter = "self">
+            <Name>Turn Unit On</Name>
+            <CallbackMethod>coolMasterSetOn</CallbackMethod>
+        </Action> 
+        <Action id="setCoolMode" deviceFilter = "self">
+            <Name>Set Unit to Cool Mode</Name>
+            <CallbackMethod>coolMasterSetCool</CallbackMethod>
+        </Action> 
+        <Action id="setHeatMode" deviceFilter = "self">
+            <Name>Set Unit to Heat Mode</Name>
+            <CallbackMethod>coolMasterSetHeat</CallbackMethod>
+        </Action> 
+        <Action id="setDryMode" deviceFilter = "self">
+            <Name>Set Unit to Dry Mode</Name>
+            <CallbackMethod>coolMasterSetDry</CallbackMethod>
+        </Action> 
+        <Action id="setFanMode" deviceFilter = "self">
+            <Name>Set Unit to Fan Mode</Name>
+            <CallbackMethod>coolMasterSetFan</CallbackMethod>
+        </Action> 
+        <Action id="setSwingModeAuto" deviceFilter = "self">
+            <Name>Set Unit to Swing Mode Auto</Name>
+            <CallbackMethod>coolMasterSetSwingAuto</CallbackMethod>
+        </Action> 
+        <Action id="setSwingModeHoriz" deviceFilter = "self">
+            <Name>Set Unit to Swing Mode Horiz</Name>
+            <CallbackMethod>coolMasterSetSwingHoriz</CallbackMethod>
+        </Action> 
+        <Action id="setSwingMode30" deviceFilter = "self">
+            <Name>Set Unit to Swing Mode 30</Name>
+            <CallbackMethod>coolMasterSetSwing30</CallbackMethod>
+        </Action> 
+        <Action id="setSwingMode45" deviceFilter = "self">
+            <Name>Set Unit to Swing Mode 45</Name>
+            <CallbackMethod>coolMasterSetSwing45</CallbackMethod>
+        </Action> 
+        <Action id="setSwingMode60" deviceFilter = "self">
+            <Name>Set Unit to Swing Mode 60</Name>
+            <CallbackMethod>coolMasterSetSwing60</CallbackMethod>
+        </Action> 
+        <Action id="setSwingModeVert" deviceFilter = "self">
+            <Name>Set Unit to Swing Mode Vert</Name>
+            <CallbackMethod>coolMasterSetSwingVert</CallbackMethod>
+        </Action> 
+</Actions>

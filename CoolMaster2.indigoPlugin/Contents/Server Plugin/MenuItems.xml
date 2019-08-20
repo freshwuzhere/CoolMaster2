@@ -1,0 +1,11 @@
+<?xml version="1.0"?>
+<MenuItems>
+    <MenuItem id="menu1">
+        <Name>Decrease Temperature 1 degree</Name>
+        <CallbackMethod>decTemperature</CallbackMethod>
+    </MenuItem>
+    <MenuItem id="menu2">
+        <Name>Increase Temperature 1 degree</Name>
+        <CallbackMethod>incTemperature</CallbackMethod>
+    </MenuItem>
+</MenuItems>    

@@ -1,0 +1,115 @@
+<?xml version="1.0"?>
+<Devices>
+	<!-- ========================================================================= -->
+	<Device type="custom" id="HVAC_Unit_CM" >
+		<Name>HVAC_UNIT_CM</Name>
+		<ConfigUI>
+			<Field type="label" id="select_HVAC_Unit">
+				<Label>Select Which Coolmaster Controller controls this device</Label>
+				<Description>This is the individual HVAC unit attached to CM</Description>
+			</Field>
+			<Field type="menu" id="CM_Controllers">
+				<Label>CoolMaster:</Label>
+				<List class="self" filter="unmade" method="coolMasterUnitListGenerator" />
+				<CallbackMethod>collectHVACsonthisCM</CallbackMethod>
+			</Field>
+			<Field type="menu" id="ACDevices">
+				<Label>Selection</Label>
+				<List class="self" filter="unmade" method="makeHVAClist" dynamicReload="true"/>
+			</Field>
+			<Field id="address" type="textfield" hidden="true" defaultValue="123456789">
+				<Label>Address</Label>
+			</Field>
+		</ConfigUI>
+		<States>
+			<State id="roomTemperature">
+				<ValueType>Number</ValueType>
+				<TriggerLabel>Room Temperature</TriggerLabel>
+				<ControlPageLabel>Room Temperature</ControlPageLabel>
+			</State>
+			<State id="roomHumidity">
+				<ValueType>Number</ValueType>
+				<TriggerLabel>Room Humidity</TriggerLabel>
+				<ControlPageLabel>Room Humidity</ControlPageLabel>
+			</State>		
+			<State id="heatSetPoint">
+				<ValueType>Number</ValueType>
+				<TriggerLabel>Heat Setpoint</TriggerLabel>
+				<ControlPageLabel>Heat Setpoint</ControlPageLabel>
+			</State>
+			<State id="coolSetPoint">
+				<ValueType>Number</ValueType>
+				<TriggerLabel>Cool Setpoint</TriggerLabel>
+				<ControlPageLabel>Cool Setpoint</ControlPageLabel>
+			</State>
+			<State id="mode">
+				<ValueType>
+					<List>
+						<Option value="Off">Off</Option>
+						<Option value="Heat">Heat</Option>
+						<Option value="Cool">Cool</Option>
+						<Option value="Fan">Fan</Option>
+						<Option value="Dry">Dry</Option>						
+						<Option value="Auto">Auto</Option>
+					</List>
+				</ValueType>
+				<TriggerLabel>Operation Mode Changed</TriggerLabel>
+				<TriggerLabelPrefix>Mode Changed to</TriggerLabelPrefix>
+				<ControlPageLabel>Current Mode</ControlPageLabel>
+				<ControlPageLabelPrefix>Mode is</ControlPageLabelPrefix>
+			</State>
+			<State id="fanSpeed">
+				<ValueType>
+					<List>
+						<Option value="Low">Low</Option>
+						<Option value="Med">Med</Option>
+						<Option value="High">High</Option>
+						<Option value="Top">Top</Option>
+						<Option value="Auto">Auto</Option>						
+					</List>	
+				</ValueType>
+				<TriggerLabel>fanSpeedSetting</TriggerLabel>
+				<ControlPageLabel>fanSpeedSetting</ControlPageLabel>
+			</State>
+			<State id="Swing">
+				<ValueType>
+					<List>
+						<Option value="Horiz">Horiz</Option>
+						<Option value="Angle_30">Angle_30</Option>
+						<Option value="Angle_45">Angle_45</Option>
+						<Option value="Angle_60">Angle_60</Option>
+						<Option value="Vert">Vert</Option>						
+						<Option value="Auto">Auto</Option>						
+					</List>	
+				</ValueType>
+				<TriggerLabel>swingSetting</TriggerLabel>
+				<ControlPageLabel>swingSetting</ControlPageLabel>
+			</State>
+        </States>
+    </Device>
+    <Device type="custom" id="CoolMaster_Controller" >
+		<Name>Coolmaster_Controller</Name>
+		<ConfigUI>
+			<Field type="label" id="selectSerial">
+				<Label>Select port for USB-comms to Cool master</Label>
+				<Description></Description>
+			</Field>
+			<Field type="menu" id="serialPort">
+				<Label>Serial Port:</Label>
+				<List class="indigo.serialPorts" filter="indigo.ignoreBluetooth" />
+			</Field>
+		</ConfigUI>
+		<States>
+		    <State id="commActive">
+                <ValueType>Boolean</ValueType>
+                <TriggerLabel>coolAutomation comms Active</TriggerLabel>
+                <ControlPageLabel>coolAutomation coms Active</ControlPageLabel>
+			</State>
+		    <State id="commConnected">
+                <ValueType>Boolean</ValueType>
+                <TriggerLabel>coolAutomation comms Connected</TriggerLabel>
+                <ControlPageLabel>coolAutomation coms Connected</ControlPageLabel>
+			</State>			
+        </States>
+    </Device>
+</Devices>

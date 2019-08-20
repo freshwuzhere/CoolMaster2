@@ -1,0 +1,466 @@
+#! /usr/bin/env python
+# -*- coding: utf-8 -*-
+####################
+# CoolMaster HVAC controller Plugin
+# Developed by Ian Burns based (with MUCH gratitude on Jandy Aqualink by J. Yergey
+# Dec 2013
+################################################################################
+# Python imports
+import string
+import inspect
+import time
+
+# local imports from CoolMaster.py
+from CoolMaster import CoolMaster
+#from hvac_params import hvac_params
+
+##################################################################################################
+class Plugin(indigo.PluginBase):
+
+	##############################################################################################
+	def __init__(self, pluginId, pluginDisplayName, pluginVersion, pluginPrefs):
+		# Initalise Base Class
+		indigo.PluginBase.__init__(self, pluginId, pluginDisplayName, pluginVersion, pluginPrefs)
+		# Debugging Turue generates lots of output
+		### TODO ### build Toggle Button for debug output
+		self.debug = True
+		
+		#####
+		# initialse the class
+		#####
+		self.coolmaster = CoolMaster(self)
+
+		
+	########################################
+	def __del__(self):
+		indigo.PluginBase.__del__(self)
+		
+	##############################################################################################
+	# Using Built-in control methods from indigo
+	##############################################################################################
+	def startup(self):
+		# All the serial work is handles in comms thread
+		pass
+	
+	########################################
+	def shutdown(self):
+		# Once again stop comms thread will tidy up 
+		pass
+
+
+	#######
+	### Check serial device <-> config is OK 
+	### Check serial port is valid
+	### If HVAC UNIT is OK then set the state variables
+	######
+	def validateDeviceConfigUi(self, valuesDict, deviceTypeId, devId):
+		dev=indigo.devices[devId]
+		if deviceTypeId == "CoolMaster_Controller":		
+			if len(valuesDict["serialPort"]) == 0:
+				# no valid serial port -- show an error.
+				errorMsgDict = indigo.Dict()
+				self.validateSerialPortUi(valuesDict, errorMsgDict, u"devicePortFieldId")
+				self.debugLog(" \nERROR MESSAGES AS FOLLOWS:- " + str(errorMsgDict))
+				#errorMsgDict["serialPort"] = "Select a valid serial port. If none are listed, then make sure you have installed the FTDI VCP driver."
+				return (False, valuesDict, errorMsgDict)
+		### check for multiple usage of same serial port - from Jandy link - not implemented yet
+		###	If using same serial port, probably just a mistake, otherwise note that multiple devices are not supported.
+	##!		Try, as of version 1.1 to allow multiple devices, leaving it to user's discretion not to run more than one simultaneously.
+	##!		for dev in indigo.devices.iter("self"):
+	##!			if devId != dev.id:				# Only check if this is not an existing device.
+	##!				devProps = dev.pluginProps
+	##!				priorPortName = devProps.get("serialPort")
+	##!				currentPortName = valuesDict["serialPort"]
+	##!				if priorPortName == currentPortName:
+	##!					errorMsgDict = indigo.Dict()
+	##!					errorMsgDict["serialPort"] = "Device " + dev.name + " already set to use this port.  Can't have two devices on same serial port."
+	##!					return (False, valuesDict, errorMsgDict)
+	##!				else:
+	##!					errorMsgDict = indigo.Dict()
+	##!					errorMsgDict["serialPort"] = "Can't have two devices with this plugin; please CANCEL device setup."
+	##!					return (False, valuesDict, errorMsgDict)				
+		### User choices look good, so return True (client will then close the dialog window).
+	# 		elif "createACDevice" in valuesDict:
+	# 			# Update the properties of the HVAC device
+	# 			localProps = dev.pluginProps
+	# 			# assuming each HVAC unit has 1 only temperature sensor 
+	# 			### TODO add ConfigUI to load this
+	# 			localProps.update({"temperatureSensorCount":0,"checkForUpdates":True})
+	# 			# assuming each HVAC unit has 0 only humidity sensor for now
+	# 			### TODO add ConfigUI to load this
+	# 			localProps.update({"humiditySensorCount":1,"checkForUpdates":True})
+	# 			
+	# 			dev.replacePluginPropsOnServer(localProps)
+	# 			
+	# 			self.debugLog("valuesDict = " + str(valuesDict))
+	# 			#self.debugLog("ConfigUI = " + str(valuesDict))
+	# 			dev_name = valuesDict["createACDevice"]
+	# 			self.debugLog("devName = " + dev_name[0])
+	# 			for unit_data in coolmaster.coolMatserUnitParams
+	# 				if(dev_name[3:] == unit_data.address:
+	# 					coolmaster.setStateFromHVACParams(devId, unit)
+			else:
+				########
+				##
+				##	First check the serial port gets a response and can decode it
+				##	if get at least one line pass to values dict to make list.
+				##  if OK - indicate no units connected - if Error raise error and stop
+				##
+				#######
+			
+				self.debugLog(" --->  in validate configUI" )
+				#######
+				##
+				##
+				##
+				#####
+				return (True, valuesDict)
+		else:  #  assume it is HVAC unit - can add more as they come
+			self.debugLog("\n####################\n###  in configui Props \n##########\n"+ str(dev.pluginProps) + "\n##########")
+			self.debugLog("\n####################\n###  valuesDict \n##########\n"+ str(valuesDict) + "\n##########")
+
+			if u"CM_Controller_ID" in dev.pluginProps:
+				co_address = str(dev.pluginProps["CM_ControllerID"]) + "-" + dev.pluginProps["HVACUnitAddress"]
+			else:
+				co_address = valuesDict["CM_Controllers"] + "-" + valuesDict["ACDevices"]
+			self.debugLog("######  coaddress = " + co_address) 
+			
+			valuesDict["address"]=co_address
+			return(True,valuesDict)
+
+
+	def getDeviceStateList(self, dev):
+		#self.debugLog("\n\n HERE are dev data  " + str(dev))
+		typeId = dev.deviceTypeId
+		#self.debugLog("\n\n HERE are TypeId  " + str(typeId))
+		devId = dev.id
+		
+		#self.debugLog("\n \n THIS IS dev ID  " + str(devId))
+		#self.debugLog("\n ALLOWED  TypeId  LIST " + str(self.devicesTypeDict))
+	###	True, and necessary, for new device, when plugin type is selected.
+		if typeId not in self.devicesTypeDict:
+			indigo.server.log("\n FIRST TRAP - not in list returning None\n")
+			return None
+	###	True, and necessary, for new device, when device model is selected.
+		defaultStatesList = self.devicesTypeDict[typeId]["States"]
+		indigo.server.log(" \n \n DEFAULT STATES LIST \n" + str(defaultStatesList))
+		if devId not in indigo.devices:
+			return defaultStatesList
+			
+		###	CoolMaster States are very simple and ONLY commsActive (True/False) commsConnected(True/False) 
+		if dev.deviceTypeId == "CoolMaster_Controller":
+			commConnected = self.coolmaster.testComms(dev)  #  check comms setup OK
+			indigo.server.log(" \n\n  ComConnected   " + str(commConnected))
+
+			if commConnected :
+				#indigo.server.log("\n dev defined here look for commConnected state   \n  DEV"  + str(dev) + "\n  DEV STATES \n" + str(dev.states))
+				dev.updateStateOnServer("commConnected", value=True)
+			return defaultStatesList
+		elif dev.deviceTypeId == "HVAC_UNIT_CM":
+			return defaultStatesList
+		
+		else:
+			self.coolmaster.setStateFromHVACParams(dev.id )
+			return defaultStatesList
+	
+	#########################################
+	def deviceStartComm(self, dev):
+		self.debugLog("<<-- entering deviceStartComm, Device: " + dev.name + "; ID=" +  str(dev.id) + ", Type=" + dev.deviceTypeId)
+		if dev.deviceTypeId == "CoolMaster_Controller":
+			dev.stateListOrDisplayStateIdChanged()
+			self.coolmaster.startCommThread(dev)
+		self.debugLog(u"exiting deviceStartComm -->>\n" + str(dev))
+
+	def deviceStopComm(self, dev):
+		self.debugLog("<<-- entering deviceStopComm, Device: " + dev.name + "; ID=" +  str(dev.id) + ", Type=" + dev.deviceTypeId)
+		if dev.deviceTypeId == "CoolMaster_Controller":
+			self.coolmaster.stopCommThread(dev)
+		self.debugLog("exiting deviceStopComm -->>")
+
+
+	##############################################################################################
+	# Actions object callbacks routines
+	##############################################################################################
+	#################################
+	#	MENU Actions
+	#
+	### MENU action to switch plugin's detailed debugging.
+	def toggleDebug(self):
+		if self.debug == True:
+			self.debug = False
+		else:
+			self.debug = True		
+		indigo.server.log("Toggled plugin debugging to " + str(self.debug))
+	###
+	### MENU action to log device information, states, their current values, and device properties - used for debugging
+	def logDeviceInfo(self, menuItemDict, typeID):
+		if menuItemDict["coolMaster"] == "":
+			errorMsgDict = indigo.Dict()
+			errorMsgDict["coolMaster"] = "Select a valid coolmaster device. If none exists, create one first."
+			return (False, menuItemDict, errorMsgDict)
+		else:
+			indigo.server.log(self.pluginDisplayName + ", version " + str(self.pluginVersion))
+			coolMasterDeviceId = int(menuItemDict["coolMaster"])
+			dev = indigo.devices[coolMasterDeviceId]
+			indigo.server.log("Device name: " + dev.name + ", ID: " + str(dev.id) + ", Device type: " + dev.deviceTypeId)
+			indigo.server.log("Device states: ")
+			for state in dev.states:
+				currentState = dev.states[state]
+				if state == "tempUnits":
+					if currentState != []:
+						currentState = currentState[1]
+			indigo.server.log("Device properties: ")
+			for prop in dev.pluginProps:
+				currentProperty = dev.pluginProps[prop]
+				indigo.server.log("    " + prop + ", " + str(currentProperty))
+			return (True, menuItemDict)
+
+	def coolMasterUnitListGenerator(self, filter="", valuesDict=None, typeId="", targetId=0):
+		indigo.server.log("in coolMasterList Generator code")
+		dev = indigo.devices[targetId]
+#		indigo.server.log("DEV+ " + str(dev))
+		localPluginProps = dev.pluginProps
+		myArray=[]
+		for all_devs in indigo.devices:
+#			self.debugLog("all_devs ID = " + str(all_devs.deviceTypeId))
+			if all_devs.deviceTypeId == "CoolMaster_Controller":
+				myArray.append(all_devs.name) 			
+		else:
+			indigo.server.log("No Coolmasters created yet")
+		indigo.server.log("myArray before return " + str(myArray))
+		return myArray
+
+		
+
+
+	def ACUnitListGenerator(self, filter="", valuesDict=None, typeId="", targetId=0):
+		# From the example above, filter = “stuff”
+		# You can pass anything you want in the filter for any purpose
+		# Create an array where each entry is a list - the first item is
+		# the value attribute and last is the display string that will 
+		# show up in the control. All parameters are read-only.
+		indigo.server.log("in list code")
+		dev = indigo.devices[targetId]
+#		indigo.server.log("DEV+ " + str(dev))
+		localPluginProps = dev.pluginProps
+		myArray=[]
+		if "HVACList" in localPluginProps:
+			hvac_list = localPluginProps["HVACList"]
+			count = 1
+			for hv in hvac_list:
+				option = "option " + str(count)
+				count = count + 1				
+				#myArray.append((option,hv))
+				myArray.append((hv))
+				indigo.server.log("myArray before update " + str(myArray))
+		else:
+			indigo.server.log("HVAC List not in props")
+		return myArray
+
+
+	def collectHVACsonthisCM(self , valuesDict, typeId, devId  ):
+	
+		dev=indigo.devices[devId]
+#		self.debugLog("\n##############\n###valuesDict = >>" + str(valuesDict) + "\n##########\n")
+		CM_Name = valuesDict["CM_Controllers"]
+		
+		#######
+		### First write this selection in Dev props for reference when needed
+		### then send stat3 and see load the result
+		####### 	
+		
+		for devs in indigo.devices:
+#			self.debugLog("devs name = " + str(devs.name))
+			if devs.name == CM_Name:
+				CM_Id = devs.id
+				
+		localProps = dev.pluginProps
+		localProps.update({"CMControllerName":CM_Name,"checkForUpdates":True})
+		localProps.update({"CMControllerID":CM_Id,"checkForUpdates":True})
+		dev.replacePluginPropsOnServer(localProps)
+		self.debugLog("\n############\n### UPDATED PROPS\n###CM_NAme => " + CM_Name + "CM_Id = >>" + str(CM_Id)+ "\n#############\n")
+
+		########
+		### Now send a stat3 to the serial port and decode results
+		########
+		self.debugLog("\n############\n### ABOUT TO TRY STAT3 \n#############\n")
+		self.coolmaster.queueSerialCmd("stat3")
+		time.sleep(4)
+		self.debugLog("\n############\n### output HVAC Unit PArams : = " + str(self.coolmaster.coolMasterUnitParams) + "\n#############\n")
+
+		return
+		
+	def makeHVAClist(self, filter="", valuesDict=None, typeId="", targetId=0):	
+		myArray=[]
+		dev=indigo.devices[targetId]
+		alreadyConfiguredHVACUnits = []
+		for devs in indigo.devices:
+#			self.debugLog("devs name = " + str(devs.name))
+			if devs.deviceTypeId == "HVAC_Unit_CM":
+				alreadyConfiguredHVACUnits.append(devs.address)
+		self.debugLog("\n################\n### Configured List of HVAC's =>> " +str(alreadyConfiguredHVACUnits)+ "\n###########\n")
+		
+		for hvac in self.coolmaster.coolMasterUnitParams:			
+			if hvac.address not in alreadyConfiguredHVACUnits:
+				myArray.append(hvac.address)
+		
+		self.debugLog("\n################\n### myArray List  =>> " +str(myArray)+ "\n###########\n")
+		
+		return myArray
+	
+	
+	
+	def	setHVACUnitParams(self , valuesDict, typeId, devId  ):
+		dev = indigo.devices[devId]
+		localProps = dev.pluginProps
+		localProps.update({"HVACUnitAddress":valuesDict["ACDevices"],"checkForUpdates":True})
+		### 
+		### Add other properties here too.
+		###
+		dev.replacePluginPropsOnServer(localProps)
+		self.debugLog("\n####################\n###   SET device ouput   \n##########\n"+ str(dev) + "\n##########")	
+		return
+
+	########################################
+	# Thermostat Action callback
+	######################
+	# Main thermostat action bottleneck called by Indigo Server.
+# 	def actionControlThermostat(self, action, dev):
+# 		###### SET HVAC MODE ######
+# 		if action.thermostatAction == indigo.kThermostatAction.SetHvacMode:
+# 			self.coolmaster.handleChangeHvacModeAction(dev, action.actionMode)
+# 
+# 		###### SET FAN MODE ######
+# 		elif action.thermostatAction == indigo.kThermostatAction.SetFanMode:
+# 			self.coolmaster.handleChangeFanModeAction(dev, action.actionMode)
+# 
+# 		###### SET COOL SETPOINT ######
+# 		elif action.thermostatAction == indigo.kThermostatAction.SetCoolSetpoint:
+# 			newSetpoint = action.actionValue
+# 			self.coolmaster.handleChangeSetpointAction(dev, newSetpoint, u"change cool setpoint", u"setpointCool")
+# 
+# 		###### SET HEAT SETPOINT ######
+# 		elif action.thermostatAction == indigo.kThermostatAction.SetHeatSetpoint:
+# 			newSetpoint = action.actionValue
+# 			self.coolmaster.handleChangeSetpointAction(dev, newSetpoint, u"change heat setpoint", u"setpointHeat")
+# 
+# 		###### DECREASE/INCREASE COOL SETPOINT ######
+# 		elif action.thermostatAction == indigo.kThermostatAction.DecreaseCoolSetpoint:
+# 			newSetpoint = dev.coolSetpoint - action.actionValue
+# 			self.coolmaster.handleChangeSetpointAction(dev, newSetpoint, u"decrease cool setpoint", u"setpointCool")
+# 
+# 		elif action.thermostatAction == indigo.kThermostatAction.IncreaseCoolSetpoint:
+# 			newSetpoint = dev.coolSetpoint + action.actionValue
+# 			self.coolmaster.handleChangeSetpointAction(dev, newSetpoint, u"increase cool setpoint", u"setpointCool")
+# 
+# 		###### DECREASE/INCREASE HEAT SETPOINT ######
+# 		elif action.thermostatAction == indigo.kThermostatAction.DecreaseHeatSetpoint:
+# 			newSetpoint = dev.heatSetpoint - action.actionValue
+# 			self.coolmaster.handleChangeSetpointAction(dev, newSetpoint, u"decrease heat setpoint", u"setpointHeat")
+# 
+# 		elif action.thermostatAction == indigo.kThermostatAction.IncreaseHeatSetpoint:
+# 			newSetpoint = dev.heatSetpoint + action.actionValue
+# 			self.coolmaster.handleChangeSetpointAction(dev, newSetpoint, u"increase heat setpoint", u"setpointHeat")
+# 
+# 		###### REQUEST STATE UPDATES ######
+# 		elif action.thermostatAction in [indigo.kThermostatAction.RequestStatusAll, indigo.kThermostatAction.RequestMode,
+# 		indigo.kThermostatAction.RequestEquipmentState, indigo.kThermostatAction.RequestTemperatures, indigo.kThermostatAction.RequestHumidities,
+# 		indigo.kThermostatAction.RequestDeadbands, indigo.kThermostatAction.RequestSetpoints]:
+# 			self.coolmaster.refreshStatesFromHardware(dev, True, False)
+
+	###################
+	#  Specific Action Calls
+	####################
+	
+	def coolMasterIncrementThermostat(self, action, dev):
+		self.debugLog("###\n  ACTION = " + str(action)) 
+		self.coolmaster.setTemp(dev, "+1")
+	
+	def coolMasterDecrementThermostat(self, action, dev):
+		self.debugLog("###\n  ACTION = " + str(action)) 
+		self.coolmaster.setTemp(dev, "-1")
+	
+	def coolMasterSetThermostat(self, action, dev):
+		self.debugLog("###\n  ACTION = " + str(action)) 
+		self.coolmaster.setTemp(dev, "temp")
+	
+	def coolMasterSetFanAuto(self, action, dev):
+		self.debugLog("###\n  ACTION = " + str(action)) 
+		self.coolmaster.setFanMode(dev, "Auto")
+	
+	def coolMasterSetFanTop(self, action, dev):
+		self.debugLog("###\n  ACTION = " + str(action)) 
+		self.coolmaster.setFanMode(dev, "Top")
+	
+	def coolMasterSetFanHigh(self, action, dev):
+		self.debugLog("###\n  ACTION = " + str(action)) 
+		self.coolmaster.setFanMode(dev, "High")
+	
+	def coolMasterSetFanMed(self, action, dev):
+		self.debugLog("###\n  ACTION = " + str(action)) 
+		self.coolmaster.setFanMode(dev, "Med")
+	
+	def coolMasterSetFanLow(self, action, dev):
+		self.debugLog("###\n  ACTION = " + str(action)) 
+		self.coolmaster.setFanMode(dev, "Low")
+	
+	def coolMasterSetAllOff(self, action, dev):
+		self.debugLog("###\n  ACTION = " + str(action)) 
+		self.coolmaster.setMode(dev, "All_Off")
+	
+	def coolMasterSetAllOn(self, action, dev):
+		self.debugLog("###\n  ACTION = " + str(action)) 
+		self.coolmaster.setMode(dev, "All_On")
+	
+	def coolMasterSetOff(self, action, dev):
+		self.debugLog("###\n  ACTION = " + str(action)) 
+		self.coolmaster.setMode(dev, "Off")
+	
+	def coolMasterSetOn(self, action, dev):
+		self.debugLog("###\n  ACTION = " + str(action)) 
+		self.coolmaster.setMode(dev, "On")
+			
+	def coolMasterSetCool(self, action, dev):
+		self.debugLog("###\n  ACTION = " + str(action)) 
+		self.coolmaster.setMode(dev, "Cool")
+	
+	def coolMasterSetHeat(self, action, dev):
+		self.debugLog("###\n  ACTION = " + str(action)) 
+		self.coolmaster.setMode(dev, "Heat")
+	
+	def coolMasterSetDry(self, action, dev):
+		self.debugLog("###\n  ACTION = " + str(action)) 
+		self.coolmaster.setMode(dev, "Dry")
+	
+	def coolMasterSetFan(self, action, dev):
+		self.debugLog("###\n  ACTION = " + str(action)) 
+		self.coolmaster.setMode(dev, "Fan")
+	
+	def coolMasterSetSwingAuto(self, action, dev):
+		self.debugLog("###\n  ACTION = " + str(action)) 
+		self.coolmaster.setSwingMode(dev, "Auto")
+	
+	def coolMasterSetSwingHoriz(self, action, dev):
+		self.debugLog("###\n  ACTION = " + str(action)) 
+		self.coolmaster.setSwingMode(dev, "Horiz")
+	
+	def coolMasterSetSwing30(self, action, dev):
+		self.debugLog("###\n  ACTION = " + str(action)) 
+		self.coolmaster.setSwingMode(dev, "Angle_30")
+	
+	def coolMasterSetSwing45(self, action, dev):
+		self.debugLog("###\n  ACTION = " + str(action)) 
+		self.coolmaster.setSwingMode(dev, "Angle_45")
+	
+	def coolMasterSetSwing60(self, action, dev):
+		self.debugLog("###\n  ACTION = " + str(action)) 
+		self.coolmaster.setSwingMode(dev, "Angle_60")
+	
+	def coolMasterSetSwingVert(self, action, dev):
+		self.debugLog("###\n  ACTION = " + str(action)) 
+		self.coolmaster.setSwingMode(dev, "Vert")
+	
+
+	
+	
+
