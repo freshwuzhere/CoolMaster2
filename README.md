@@ -27,7 +27,7 @@ Interface between Indigo Home Automation system and Coolmaster 4000M
 
 1.  If the light is blinking happily - maek a new device.  The available device should list in teh HVAC units.
 
-1.  Once you have your HVAC units created - you can make actions that corresponf to the Coolmaster commands.
+1.  Once you have your HVAC units created - you can make actions that correspond to the Coolmaster commands.  Like ON/OFF MODE (COOL, HEAT, FAN, DRY), Set Temp.
 
 1.  Once you have actions you can make control pages (I have one per zone) or interface to thermostats (mine read the Nest g thermos and set cooling heating accordingly).
 
@@ -37,10 +37,18 @@ Interface between Indigo Home Automation system and Coolmaster 4000M
 
 1.  The serial handling was originally borrowed from the old Indigo ibraries.  Thanks to who ever wrote them.  This plugin works with 7.3 and everthing since 5.X
 
-1.  the plugin needs pyserial which shoudl be already in your installation.
+1.  The plugin needs pyserial which should be already in your installation.
+
+1.  The temperature settings should match the units in the Coolmaster.  If it says 20 (C) then you will be entering numbers in C.  I use mine in F.  I think you can configure this on Coolmaster in Serial Terminal.
 
 ## Known Bugs
 
-1.  If you send too many commands - they will not all get through.  This is an archive of the buffering system, the slow 9600 baud and how many devices you have (data sentence length).  Be pateint and send commands again.  Generally I haven't been inconvenienced enough to fix this so it isn't too ig a deal ti my usage.
+1.  If you send too many commands - they will not all get through.  This is an archive of the buffering system, the slow 9600 baud and how many devices you have (data sentence length).  Be pateint and send commands again.  Generally, I haven't been inconvenienced enough to fix this so it isn't too big a deal to my usage.
 
+PRMs
+
+http://coolautomation.com/Lib/doc/prm/CoolAutomation-PRM-CoolMaster-v4.08.pdf
+http://coolautomation.com/Lib/doc/CoolMasterNet/prm/CoolMasterNet-PRM-v0.9.pdf 
  
+ 
+ian
